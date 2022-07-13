@@ -1,15 +1,9 @@
-name: Build and Release
+name: Build and deploy dotnet core app to Azure Function App - testfunctionapparturdatabricks
 
 on:
-  create:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-    paths:
-      - '**.cs'
-      - '**.csproj'
-      - 'tests/jobdefs/'
-      - 'tests/spark-apps/'
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 env:
