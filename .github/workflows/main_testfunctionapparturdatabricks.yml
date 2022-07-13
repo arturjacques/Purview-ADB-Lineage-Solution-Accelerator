@@ -55,6 +55,7 @@ jobs:
 
   createRelease:
     name: Create Release
+    needs: [build]
     runs-on: ubuntu-latest
     environment: 
       name: Production
