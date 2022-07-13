@@ -1,42 +1,92 @@
-# Docs for the Azure Web Apps Deploy action: https://github.com/azure/functions-action
-# More GitHub Actions for Azure: https://github.com/Azure/actions
-
-name: Build and deploy dotnet core app to Azure Function App - testfunctionapparturdatabricks
+name: Build and Release
 
 on:
-  push:
-    branches:
-      - main
+  create:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+    paths:
+      - '**.cs'
+      - '**.csproj'
+      - 'tests/jobdefs/'
+      - 'tests/spark-apps/'
   workflow_dispatch:
 
 env:
-  AZURE_FUNCTIONAPP_PACKAGE_PATH: 'function-app/adb-to-purview/src/' # set this to the path to your web app project, defaults to the repository root
-  DOTNET_VERSION: '6.0.x' # set this to the dotnet version to use
+  DOTNET_VERSION: '6.x.x' # The .NET SDK version to use
+  REPO: "function-app/adb-to-purview/src/"
+  TEST: "function-app/adb-to-purview/tests/unit-tests"
 
 jobs:
-  build-and-deploy:
-    runs-on: windows-latest
+  build:
+
+    name: build-${{matrix.os}}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest]
+
     steps:
-      - name: 'Checkout GitHub Action'
-        uses: actions/checkout@v2
+    - uses: actions/checkout@v2
+    - name: Setup .NET Core
+      uses: actions/setup-dotnet@v1
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+      
+    - name: Install dependencies
+      run: dotnet restore ${{ env.REPO }}
+      
+    - name: Build
+      run: dotnet build ${{ env.REPO }} --configuration Release --no-restore
+      
+    - name: Test
+      run:  dotnet test ${{ env.TEST }}
+      
+    - name: Publish
+      run: dotnet publish ${{ env.REPO }}
+    
+    - name: Confirm Mappings Match
+      run: python tests/deployment/test_arm_mapping_matches_json.py
 
-      - name: Setup DotNet ${{ env.DOTNET_VERSION }} Environment
-        uses: actions/setup-dotnet@v1
-        with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
+    - name: Display structure of downloaded files
+      run: | 
+        mkdir ~/artifact 
+        Compress-Archive -Path D:/a/Purview-ADB-Lineage-Solution-Accelerator/Purview-ADB-Lineage-Solution-Accelerator/function-app/adb-to-purview/src/bin/Debug/net6.0/publish/* -DestinationPath ~/artifact/FunctionZip.zip
+      
+    - name: Upload Function Zip Build Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: FunctionZip
+        path: ~/artifact/FunctionZip.zip
 
-      - name: 'Resolve Project Dependencies Using Dotnet'
-        shell: pwsh
-        run: |
-          pushd './${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}'
-          dotnet build --configuration Release --output ./output
-          popd
+  runIntegrationTests:
+    name: Test on Integration Tests
+    needs: [build]
+    runs-on: ubuntu-latest
+    environment: 
+      name: Integration
+    steps:
+    - uses: actions/checkout@v3
 
-      - name: 'Run Azure Functions Action'
-        uses: Azure/functions-action@v1
-        id: fa
-        with:
-          app-name: 'testfunctionapparturdatabricks'
-          slot-name: 'Production'
-          package: '${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}/output'
-          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_890450BD28E648E280AFD52A74C8FADB }}
+  createRelease:
+    name: Create Release
+    if: ${{ github.event_name == 'create' && github.ref_type == 'tag' }}
+    needs: [runIntegrationTests]
+    runs-on: ubuntu-latest
+    environment: 
+      name: Production
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Download Artifact
+      uses: actions/download-artifact@v3
+      with:
+        name: FunctionZip
+        path: ~/artifacts
+
+    - name: Create Release
+      uses: ncipollo/release-action@v1
+      if: github.ref_type == 'tag'
+      with:
+        artifacts: ~/artifacts/FunctionZip.zip
+        token: ${{ secrets.GITHUB_TOKEN }}
